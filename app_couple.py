@@ -7,19 +7,17 @@ import os
 import tempfile
 import re
 
-# Lib Word (Optionnel)
+# --- GESTION DE LA LIBRAIRIE WORD ---
 try:
     from docx import Document
 except ImportError:
-    pass
+    st.error("Erreur : La librairie 'python-docx' est manquante. Ajoutez-la dans requirements.txt")
 
 # --- 0. CONFIGURATION ---
 st.set_page_config(page_title="Alliance & Schémas - Ultimate", layout="wide", page_icon="✝️")
 DB_FILE = "reponses_couple_ultimate.csv"
 
-# --- 1. LE CERVEAU : BASE DE DONNÉES CLINIQUE, THÉOLOGIQUE & PASTORALE ---
-# Structure fusionnée : Clinique | Couple | Théologie | Vérité Biblique | Conseil Pastoral | Pratique | Prière
-
+# --- 1. BIBLIOTHÈQUE D'EXPERTISE (CLINIQUE, THÉOLOGIQUE & PASTORALE) ---
 SCHEMA_LIBRARY = {
     "ca": {
         "nom": "Carence Affective",
@@ -84,7 +82,7 @@ SCHEMA_LIBRARY = {
     "da": {
         "nom": "Dépendance / Incompétence",
         "clinique": "Incapacité à gérer la vie quotidienne sans aide. Se sent comme un enfant dans un monde d'adultes.",
-        "couple": "Le 'Fardeau'. L'un porte tout, l'autre suit. Cela tue le désir sexuel (on ne désire pas un enfant) et épuise le porteur.",
+        "couple": "Le 'Fardeau'. L'un porte tout, l'autre suit. Au début c'est flatteur pour le 'fort', à la fin c'est épuisant et cela tue le désir sexuel.",
         "theologie": "Refus du mandat d'Intendant. Recherche d'un sauveur humain à la place de l'Esprit Saint.",
         "verite_biblique": "« Ce n'est pas un esprit de timidité que Dieu nous a donné, mais un esprit de force. » (2 Timothée 1:7)",
         "conseil_pastoral": "Grandir est un commandement spirituel. Votre conjoint a besoin d'un partenaire, pas d'une charge.",
@@ -93,8 +91,8 @@ SCHEMA_LIBRARY = {
     },
     "vu": {
         "nom": "Vulnérabilité au Danger",
-        "clinique": "Peur irrationnelle et constante qu'une catastrophe (maladie, argent, accident) va survenir.",
-        "couple": "La 'Prison de Sécurité'. Vous empêchez le couple de vivre, de voyager, d'investir. Le conjoint devient un garde du corps.",
+        "clinique": "Peur irrationnelle et constante qu'une catastrophe (médicale, financière, criminelle) va survenir.",
+        "couple": "La 'Prison de Sécurité'. Vous empêchez le couple de vivre, de voyager, d'investir. Le conjoint est utilisé comme un garde du corps.",
         "theologie": "Manque de foi en la Providence. C'est un 'athéisme pratique' (vivre comme si Dieu ne contrôlait rien).",
         "verite_biblique": "« Ne vous inquiétez de rien; mais en toute chose faites connaître vos besoins à Dieu. » (Philippiens 4:6)",
         "conseil_pastoral": "L'inquiétude ne change rien à demain, mais elle vide aujourd'hui de sa force.",
@@ -204,8 +202,10 @@ SCHEMA_LIBRARY = {
 }
 SCHEMAS_ORDER = list(SCHEMA_LIBRARY.keys())
 
-# --- 2. ENGINE : MAPPING EXACT (PETER PAN) ---
+# --- 2. ENGINE : MAPPING & LECTURE ---
+
 def get_schema_map_ordered():
+    """Mapping EXACT basé sur le fichier Word (Questions groupées)"""
     m = []
     m.extend(['ca'] * 9); m.extend(['ab'] * 17); m.extend(['ma'] * 17); m.extend(['is'] * 10)
     m.extend(['im'] * 15); m.extend(['ed'] * 9); m.extend(['da'] * 15); m.extend(['vu'] * 12)
@@ -214,8 +214,15 @@ def get_schema_map_ordered():
     m.extend(['neg'] * 15); m.extend(['pu'] * 10)
     return m
 
-def parse_imported_text(text):
-    matches = re.findall(r"\[(\d)/6\]", text)
+def extract_text_from_file(uploaded_file):
+    if uploaded_file.name.endswith('.docx'):
+        doc = Document(uploaded_file)
+        return '\n'.join([p.text for p in doc.paragraphs])
+    else:
+        return uploaded_file.getvalue().decode("utf-8", "ignore")
+
+def parse_imported_text(text_content):
+    matches = re.findall(r"\[(\d)/6\]", text_content)
     if not matches: return None, "Aucune note [x/6] trouvée."
     scores = [int(x) for x in matches]
     mapping = get_schema_map_ordered()
@@ -226,7 +233,7 @@ def parse_imported_text(text):
     final = {s: (round(sums[s]/cnts[s], 2) if cnts[s]>0 else 0) for s in SCHEMAS_ORDER}
     return final, f"Succès ({limit} réponses)."
 
-# --- 3. UTILS & DATA ---
+# --- 3. UTILS & GRAPH ---
 def clean_text(text):
     if not isinstance(text, str): return str(text)
     replacements = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "…": "...", "œ": "oe", "«": '"', "»": '"', "€": "EUR"}
@@ -256,7 +263,7 @@ def create_radar(d_A, d_B, n_A, n_B):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 6])), template="plotly_white", margin=dict(t=30, b=30, l=40, r=40))
     return fig
 
-# --- 4. PDF GENERATOR ---
+# --- 4. PDF ENGINE ---
 class PDFExpert(FPDF):
     def header(self):
         self.set_fill_color(44, 62, 80); self.rect(0, 0, 210, 35, 'F')
@@ -278,7 +285,6 @@ def generate_pdf(nA, dA, nB, dB, code):
     pdf.set_font('Arial', 'B', 16); pdf.set_text_color(0)
     pdf.cell(0, 10, clean_text(f"Dossier : {code}"), 0, 1)
     pdf.set_font('Arial', '', 12); pdf.cell(0, 8, clean_text(f"Couple : {nA} & {nB}"), 0, 1); pdf.ln(5)
-    
     try:
         fig = create_radar(dA, dB, nA, nB)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as t:
@@ -308,40 +314,40 @@ def generate_pdf(nA, dA, nB, dB, code):
             pdf.draw_box("Racine Spirituelle", inf['theologie'], 245, 245, 245)
             pdf.draw_box("Conseil Pastoral", inf['conseil_pastoral'], 233, 247, 239)
             pdf.draw_box("Piste Pratique", inf['pratique'], 240, 255, 240)
-            
             pdf.set_font('Arial', 'I', 10); pdf.set_text_color(39, 174, 96)
             pdf.multi_cell(0, 6, clean_text(f"Prière : {inf['priere']}")); pdf.ln(1)
-            pdf.multi_cell(0, 6, clean_text(f"Vérité Biblique : {inf['versetite_biblique'] if 'verite_biblique' in inf else inf.get('verset','')}")); pdf.ln(5)
+            pdf.multi_cell(0, 6, clean_text(f"Vérité Biblique : {inf['verite_biblique']}")); pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# --- 5. INTERFACE THERAPEUTE (AVEC COLONNES & COULEURS) ---
+# --- 5. INTERFACE THERAPEUTE ---
 st.sidebar.title("Navigation")
 mode = st.sidebar.radio("Mode", ["🏠 Questionnaire", "💼 Espace Expert"])
 
 if mode == "🏠 Questionnaire":
-    st.title("Questionnaire")
-    st.info("Utilisez l'espace expert pour importer.")
+    st.title("Questionnaire Couple")
+    st.info("Utilisez l'espace expert pour importer vos fichiers.")
 
 elif mode == "💼 Espace Expert":
     st.title("Tableau de Bord Expert")
     pwd = st.sidebar.text_input("Mot de passe", type="password")
     
     if pwd == "Expert2024":
-        # IMPORT TEXTE
-        with st.expander("📥 IMPORTER (Copier-Coller)", expanded=True):
+        # IMPORT
+        with st.expander("📥 IMPORTER FICHIERS (.txt / .docx)", expanded=True):
             c1, c2 = st.columns(2)
-            nA = c1.text_input("Nom A"); tA = c1.text_area("Contenu A", height=100)
-            nB = c2.text_input("Nom B"); tB = c2.text_area("Contenu B", height=100)
+            fA = c1.file_uploader("Fichier A", type=['txt','docx']); nA = c1.text_input("Nom A")
+            fB = c2.file_uploader("Fichier B", type=['txt','docx']); nB = c2.text_input("Nom B")
             code = st.text_input("Code Dossier").strip().upper()
-            if st.button("Analyser"):
-                if tA and tB and code:
+            if st.button("Importer"):
+                if fA and fB and code:
+                    tA = extract_text_from_file(fA); tB = extract_text_from_file(fB)
                     sA, mA = parse_imported_text(tA); sB, mB = parse_imported_text(tB)
                     if sA and sB:
                         save_response(code, nA, sA); save_response(code, nB, sB)
-                        st.success("Dossier créé !"); st.write(mA, mB)
+                        st.success("Dossier créé !"); st.write(mA); st.write(mB)
                     else: st.error("Erreur de format.")
-
-        # DASHBOARD
+        
+        # ANALYSE VISUELLE (Style Expander + 2 Colonnes)
         st.divider()
         df = load_data()
         if not df.empty:
@@ -351,69 +357,49 @@ elif mode == "💼 Espace Expert":
                 rA = sub.iloc[0]; rB = sub.iloc[1]
                 nom_A = rA['Nom']; nom_B = rB['Nom']
                 
-                # RADAR & PDF
                 c1, c2 = st.columns([2,1])
                 with c1: st.plotly_chart(create_radar(rA.to_dict(), rB.to_dict(), nom_A, nom_B), use_container_width=True)
                 with c2:
-                    st.write("### Outils")
+                    st.write("### Actions")
                     pdf = generate_pdf(nom_A, rA.to_dict(), nom_B, rB.to_dict(), sel)
-                    st.download_button("📥 Télécharger Rapport PDF", pdf, f"Rap_{sel}.pdf", "application/pdf")
-
-                # ANALYSE TYPE "COLONNES" (Style demandé)
-                st.markdown("---")
-                st.subheader("Analyse Clinique & Pastorale")
+                    st.download_button("📥 Rapport PDF", pdf, f"Rap_{sel}.pdf", "application/pdf")
                 
+                # BOUCLE D'AFFICHAGE RESTAURÉE
+                st.markdown("---"); st.subheader("Analyse Clinique & Pastorale")
                 def get_max(s): return max(rA[s], rB[s])
                 ordered = sorted(SCHEMAS_ORDER, key=get_max, reverse=True)
                 
-                # Seuil critique demandé (5 ou 6)
                 for s in ordered:
                     mx = get_max(s)
-                    if mx >= 3: # On affiche à partir de 3
+                    if mx >= 3:
                         inf = SCHEMA_LIBRARY[s]
-                        
-                        # Qui est touché ? (Score >= 4 pour être mentionné)
                         qui = []
-                        if rA[s] >= 4: qui.append(f"{nom_A} ({rA[s]})")
-                        if rB[s] >= 4: qui.append(f"{nom_B} ({rB[s]})")
-                        txt_acteurs = " & ".join(qui) if qui else "Faible intensité"
+                        if rA[s] >= 5: qui.append(f"{nom_A} ({rA[s]})") # Seuil critique visuel à 5
+                        if rB[s] >= 5: qui.append(f"{nom_B} ({rB[s]})")
+                        txt_acteurs = " & ".join(qui)
                         
-                        # Couleur & Icône selon sévérité
-                        if mx >= 5: # CRITIQUE (5-6)
-                            color_icon = "🔴"
-                            label = f"ZONE CRITIQUE : {inf['nom'].upper()} ({txt_acteurs})"
-                            is_expanded = True
-                        else: # MOYEN (3-4)
-                            color_icon = "🟠"
-                            label = f"Schéma Actif : {inf['nom']} (Max: {mx})"
-                            is_expanded = False
+                        icon = "🔴" if mx >= 5 else "🟠"
+                        label = f"ZONE CRITIQUE : {inf['nom'].upper()} ({txt_acteurs})" if mx >= 5 else f"Schéma Actif : {inf['nom']} (Max: {mx})"
                         
-                        with st.expander(f"{color_icon} {label}", expanded=is_expanded):
-                            # MISE EN PAGE 2 COLONNES (Style Original Retrouvé)
-                            col_clin, col_theo = st.columns(2)
-                            
-                            with col_clin:
-                                st.markdown("#### 🧠 Dimension Clinique")
-                                st.write(f"**Le mécanisme :** {inf['clinique']}")
+                        with st.expander(f"{icon} {label}", expanded=(mx>=5)):
+                            cc, ct = st.columns(2)
+                            with cc:
+                                st.markdown("#### 🧠 Clinique & Couple")
+                                st.write(f"**Mécanisme :** {inf['clinique']}")
                                 st.write(f"**Impact Couple :** {inf['couple']}")
-                                if mx >= 5:
-                                    st.warning(f"⚠️ Ce schéma est très intense (>5). Il risque de dicter les réactions de {txt_acteurs} de manière automatique.")
-                            
-                            with col_theo:
-                                st.markdown("#### 🕊️ Dimension Pastorale")
-                                st.write(f"**Racine Spirituelle :** {inf['theologie']}")
-                                st.success(f"💡 **Conseil :** {inf['conseil_pastoral']}")
-                                st.info(f"🛠️ **Pratique :** {inf['pratique']}")
-                            
-                            # Pied de page de l'expander (Prière & Verset)
+                                st.info(f"Scores : {nom_A}={rA[s]} | {nom_B}={rB[s]}")
+                            with ct:
+                                st.markdown("#### 🕊️ Théologie & Pastorale")
+                                st.write(f"**Racine :** {inf['theologie']}")
+                                st.success(f"**Conseil :** {inf['conseil_pastoral']}")
+                                st.write(f"**Pratique :** {inf['pratique']}")
                             st.markdown("---")
-                            c_p, c_v = st.columns(2)
-                            with c_p: st.markdown(f"**🙏 Prière :** *{inf['priere']}*")
-                            with c_v: st.markdown(f"**📖 Vérité :** *{inf['verite_biblique']}*")
-
-                # COLLISIONS
-                st.markdown("---"); st.subheader("⚠️ Collisions Systémiques")
-                collision = False
-                if rA['ab']>=4 and rB['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_A} cherche la réassurance, {nom_B} met de la distance/critique."); collision=True
-                if rB['ab']>=4 and rA['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_B} cherche la réassurance, {nom_A} met de la distance/critique."); collision=True
-                if not collision: st.info("Pas de collision majeure détectée.")
+                            cp, cv = st.columns(2)
+                            with cp: st.markdown(f"**🙏 Prière :** *{inf['priere']}*")
+                            with cv: st.markdown(f"**📖 Vérité :** *{inf['verite_biblique']}*")
+                
+                # Collisions
+                st.markdown("---"); st.subheader("⚠️ Collisions")
+                if rA['ab']>=4 and rB['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_A} cherche la réassurance, {nom_B} met de la distance.")
+                elif rB['ab']>=4 and rA['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_B} cherche la réassurance, {nom_A} met de la distance.")
+                else: st.info("Pas de collision majeure détectée.")
