@@ -11,13 +11,13 @@ import re
 try:
     from docx import Document
 except ImportError:
-    st.error("Erreur : La librairie 'python-docx' est manquante. Ajoutez-la dans requirements.txt")
+    pass # On gère l'erreur silencieusement si non installé, le fallback txt fonctionne
 
 # --- 0. CONFIGURATION ---
 st.set_page_config(page_title="Alliance & Schémas - Ultimate", layout="wide", page_icon="✝️")
 DB_FILE = "reponses_couple_ultimate.csv"
 
-# --- 1. BIBLIOTHÈQUE D'EXPERTISE (CLINIQUE, THÉOLOGIQUE & PASTORALE) ---
+# --- 1. BIBLIOTHÈQUE D'EXPERTISE ---
 SCHEMA_LIBRARY = {
     "ca": {
         "nom": "Carence Affective",
@@ -215,9 +215,13 @@ def get_schema_map_ordered():
     return m
 
 def extract_text_from_file(uploaded_file):
+    """Lit indifféremment un .txt ou un .docx"""
     if uploaded_file.name.endswith('.docx'):
-        doc = Document(uploaded_file)
-        return '\n'.join([p.text for p in doc.paragraphs])
+        try:
+            doc = Document(uploaded_file)
+            return '\n'.join([p.text for p in doc.paragraphs])
+        except Exception as e:
+            return f"Erreur lecture docx: {e}"
     else:
         return uploaded_file.getvalue().decode("utf-8", "ignore")
 
@@ -263,7 +267,7 @@ def create_radar(d_A, d_B, n_A, n_B):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 6])), template="plotly_white", margin=dict(t=30, b=30, l=40, r=40))
     return fig
 
-# --- 4. PDF ENGINE ---
+# --- 4. PDF ENGINE (DESIGN 2 COLONNES) ---
 class PDFExpert(FPDF):
     def header(self):
         self.set_fill_color(44, 62, 80); self.rect(0, 0, 210, 35, 'F')
@@ -274,17 +278,27 @@ class PDFExpert(FPDF):
     def footer(self):
         self.set_y(-15); self.set_font('Arial', '', 8); self.set_text_color(128)
         self.cell(0, 10, clean_text(f"Page {self.page_no()}"), 0, 0, 'C')
-    def draw_box(self, title, content, r, g, b):
-        self.set_fill_color(r, g, b); self.set_font('Arial', 'B', 11); self.set_text_color(0)
-        self.cell(0, 8, clean_text(f"  {title}"), 0, 1, 'L', 1)
-        self.set_font('Arial', '', 10); self.set_text_color(50)
-        self.multi_cell(0, 6, clean_text(content), border='L'); self.ln(3)
+
+    def draw_textbox(self, x, y, w, title, content, bg_color):
+        """Dessine une boite avec titre et contenu à une position X,Y précise"""
+        self.set_xy(x, y)
+        self.set_fill_color(*bg_color)
+        self.set_font('Arial', 'B', 10); self.set_text_color(0)
+        self.cell(w, 6, clean_text(f" {title}"), 0, 1, 'L', 1)
+        
+        self.set_x(x)
+        self.set_font('Arial', '', 9); self.set_text_color(50)
+        self.multi_cell(w, 5, clean_text(content), border='L')
+        # Retourne la hauteur utilisée approximative pour gérer le curseur si besoin
+        return self.get_y() - y
 
 def generate_pdf(nA, dA, nB, dB, code):
     pdf = PDFExpert(); pdf.set_auto_page_break(True, 15); pdf.add_page()
     pdf.set_font('Arial', 'B', 16); pdf.set_text_color(0)
     pdf.cell(0, 10, clean_text(f"Dossier : {code}"), 0, 1)
     pdf.set_font('Arial', '', 12); pdf.cell(0, 8, clean_text(f"Couple : {nA} & {nB}"), 0, 1); pdf.ln(5)
+    
+    # Graphique
     try:
         fig = create_radar(dA, dB, nA, nB)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as t:
@@ -303,20 +317,54 @@ def generate_pdf(nA, dA, nB, dB, code):
         mx = get_max(s)
         if mx >= 3.0:
             inf = SCHEMA_LIBRARY[s]
-            pdf.ln(5); pdf.set_font('Arial', 'B', 14); pdf.set_text_color(192, 57, 43)
-            icon = "(!)" if mx >= 5 else ""
-            pdf.cell(0, 10, clean_text(f"{inf['nom'].upper()} {icon}"), 0, 1)
-            pdf.set_font('Arial', 'B', 10); pdf.set_text_color(100)
-            pdf.cell(0, 6, clean_text(f"Scores: {nA}={dA.get(s,0)} | {nB}={dB.get(s,0)}"), 0, 1); pdf.ln(2)
             
-            pdf.draw_box("Dimension Clinique", inf['clinique'], 235, 245, 251)
-            pdf.draw_box("Impact sur le Couple", inf['couple'], 253, 237, 236)
-            pdf.draw_box("Racine Spirituelle", inf['theologie'], 245, 245, 245)
-            pdf.draw_box("Conseil Pastoral", inf['conseil_pastoral'], 233, 247, 239)
-            pdf.draw_box("Piste Pratique", inf['pratique'], 240, 255, 240)
-            pdf.set_font('Arial', 'I', 10); pdf.set_text_color(39, 174, 96)
-            pdf.multi_cell(0, 6, clean_text(f"Prière : {inf['priere']}")); pdf.ln(1)
-            pdf.multi_cell(0, 6, clean_text(f"Vérité Biblique : {inf['verite_biblique']}")); pdf.ln(5)
+            # Titre Schéma
+            pdf.ln(5)
+            # Gestion saut de page si on est trop bas pour commencer un bloc
+            if pdf.get_y() > 200: pdf.add_page()
+
+            pdf.set_font('Arial', 'B', 14); pdf.set_text_color(192, 57, 43)
+            icon = "(!)" if mx >= 5 else ""
+            pdf.cell(0, 8, clean_text(f"{inf['nom'].upper()} {icon}"), 0, 1)
+            pdf.set_font('Arial', 'B', 9); pdf.set_text_color(100)
+            pdf.cell(0, 5, clean_text(f"Scores: {nA}={dA.get(s,0)} | {nB}={dB.get(s,0)}"), 0, 1)
+            pdf.ln(2)
+            
+            # --- DESIGN 2 COLONNES ---
+            start_y = pdf.get_y()
+            col_width = 90
+            margin = 5
+            
+            # COLONNE GAUCHE : CLINIQUE & COUPLE
+            # Clinique (Bleu pâle)
+            pdf.draw_textbox(10, start_y, col_width, "Dimension Clinique", inf['clinique'], (235, 245, 251))
+            y_after_clin = pdf.get_y() + 2
+            # Couple (Rose pâle si critique, sinon gris)
+            bg_couple = (253, 237, 236) if mx >= 5 else (245, 245, 245)
+            pdf.draw_textbox(10, y_after_clin, col_width, "Impact Couple", inf['couple'], bg_couple)
+            y_left_end = pdf.get_y()
+            
+            # COLONNE DROITE : THÉOLOGIE & CONSEIL
+            # Théologie (Gris chaud)
+            pdf.draw_textbox(10 + col_width + margin, start_y, col_width, "Racine Spirituelle", inf['theologie'], (250, 250, 245))
+            y_after_theo = pdf.get_y() + 2
+            # Conseil (Vert menthe)
+            pdf.draw_textbox(10 + col_width + margin, y_after_theo, col_width, "Conseil Pastoral & Pratique", f"{inf['conseil_pastoral']}\n\nPratique : {inf['pratique']}", (233, 247, 239))
+            y_right_end = pdf.get_y()
+            
+            # Réalignement Y au plus bas des deux colonnes
+            new_y = max(y_left_end, y_right_end) + 4
+            pdf.set_y(new_y)
+            
+            # BAS DE BLOC : PRIÈRE & VERSET (Pleine largeur)
+            pdf.set_font('Arial', 'I', 10); pdf.set_text_color(50)
+            pdf.multi_cell(0, 5, clean_text(f"Prière : {inf['priere']}"))
+            pdf.set_text_color(39, 174, 96)
+            pdf.multi_cell(0, 5, clean_text(f"Vérité : {inf['verite_biblique']}"))
+            
+            pdf.line(10, pdf.get_y()+3, 200, pdf.get_y()+3)
+            pdf.ln(5)
+
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- 5. INTERFACE THERAPEUTE ---
@@ -398,7 +446,6 @@ elif mode == "💼 Espace Expert":
                             with cp: st.markdown(f"**🙏 Prière :** *{inf['priere']}*")
                             with cv: st.markdown(f"**📖 Vérité :** *{inf['verite_biblique']}*")
                 
-                # Collisions
                 st.markdown("---"); st.subheader("⚠️ Collisions")
                 if rA['ab']>=4 and rB['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_A} cherche la réassurance, {nom_B} met de la distance.")
                 elif rB['ab']>=4 and rA['is_std']>=4: st.error(f"⚔️ **Abandon vs Exigence :** {nom_B} cherche la réassurance, {nom_A} met de la distance.")
