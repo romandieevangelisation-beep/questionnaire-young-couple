@@ -6,9 +6,14 @@ from fpdf import FPDF
 import os
 import tempfile
 import re
+# Nouvelle librairie pour lire les fichiers Word
+try:
+    from docx import Document
+except ImportError:
+    st.error("Erreur : La librairie 'python-docx' est manquante. Ajoutez-la dans requirements.txt")
 
 # --- 0. CONFIGURATION ---
-st.set_page_config(page_title="Alliance & Schémas - Master", layout="wide", page_icon="✝️")
+st.set_page_config(page_title="Alliance & Schémas - Expert", layout="wide", page_icon="✝️")
 DB_FILE = "reponses_couple_master.csv"
 
 # --- 1. BIBLIOTHÈQUE D'EXPERTISE (CLINIQUE, THÉOLOGIQUE & PASTORALE) ---
@@ -163,77 +168,72 @@ SCHEMAS_ORDER = list(SCHEMA_LIBRARY.keys())
 # --- 2. ENGINE : MAPPING & QUESTIONS ---
 
 def get_schema_map_ordered():
-    """
-    Définit l'ordre EXACT des 232 questions selon votre fichier Word.
-    C'est ce qui permet à l'importateur de savoir que la question 1 est une Carence, etc.
-    """
+    """Mapping EXACT basé sur votre fichier Word (Reponses_Peter Pan)"""
     m = []
-    m.extend(['ca'] * 9)   # Q1-9
-    m.extend(['ab'] * 17)  # Q10-26
-    m.extend(['ma'] * 17)  # Q27-43
-    m.extend(['is'] * 10)  # Q44-53
-    m.extend(['im'] * 15)  # Q54-68
-    m.extend(['ed'] * 9)   # Q69-77
-    m.extend(['da'] * 15)  # Q78-92
-    m.extend(['vu'] * 12)  # Q93-104
-    m.extend(['fu'] * 11)  # Q105-115
-    m.extend(['ass'] * 10) # Q116-125
-    m.extend(['ss'] * 17)  # Q126-142
-    m.extend(['ie'] * 9)   # Q143-151
-    m.extend(['is_std'] * 16) # Q152-167
-    m.extend(['dt'] * 11)  # Q168-178
-    m.extend(['ci'] * 15)  # Q179-193 (Note: IS dans votre fichier = Control here)
-    m.extend(['rc'] * 14)  # Q194-207
-    m.extend(['neg'] * 15) # Q208-222
-    m.extend(['pu'] * 10)  # Q223-232
+    m.extend(['ca'] * 9)   # Q1-9 Carence
+    m.extend(['ab'] * 17)  # Q10-26 Abandon
+    m.extend(['ma'] * 17)  # Q27-43 Méfiance
+    m.extend(['is'] * 10)  # Q44-53 Isolement
+    m.extend(['im'] * 15)  # Q54-68 Imperfection
+    m.extend(['ed'] * 9)   # Q69-77 Echec
+    m.extend(['da'] * 15)  # Q78-92 Dépendance
+    m.extend(['vu'] * 12)  # Q93-104 Vulnérabilité
+    m.extend(['fu'] * 11)  # Q105-115 Fusion
+    m.extend(['ass'] * 10) # Q116-125 Assujettissement
+    m.extend(['ss'] * 17)  # Q126-142 Sacrifice
+    m.extend(['ie'] * 9)   # Q143-151 Inhibition
+    m.extend(['is_std'] * 16) # Q152-167 Exigences
+    m.extend(['dt'] * 11)  # Q168-178 Droits
+    m.extend(['ci'] * 15)  # Q179-193 Contrôle Insuffisant
+    m.extend(['rc'] * 14)  # Q194-207 Recherche Approbation
+    m.extend(['neg'] * 15) # Q208-222 Négativisme
+    m.extend(['pu'] * 10)  # Q223-232 Punition
     return m
 
 def generate_web_questions():
-    """Génère les questions pour le formulaire en ligne, basées sur le mapping."""
-    questions = {}
-    mapping = get_schema_map_ordered()
-    
-    # Textes génériques (Placeholders) pour le web
-    # Note : Idéalement, remplacez ces textes par les vrais si vous avez les droits.
-    # Ici, je mets le nom du schéma pour que l'utilisateur sache de quoi ça parle.
-    for idx, schema_code in enumerate(mapping):
-        q_num = idx + 1
-        s_name = SCHEMA_LIBRARY[schema_code]['nom']
-        questions[q_num] = {
-            "text": f"Question {q_num} (Concerne : {s_name}) - Je ressens cela...",
-            "schema": schema_code
-        }
-    return questions
+    """Génère les questions placeholders pour le web"""
+    q = {}
+    m = get_schema_map_ordered()
+    for idx, sc in enumerate(m):
+        q[idx+1] = {"text": f"Question {idx+1} ({SCHEMA_LIBRARY[sc]['nom']})", "schema": sc}
+    return q
 
 ALL_QUESTIONS = generate_web_questions()
 
-def parse_imported_file(text):
-    """Lit le format [x/6] du fichier Word copié-collé"""
-    matches = re.findall(r"\[(\d)/6\]", text)
-    if not matches: return None, "Aucun format [x/6] trouvé."
+# --- NOUVEAU : FONCTION DE LECTURE DOCX ---
+def extract_text_from_file(uploaded_file):
+    """Lit indifféremment un .txt ou un .docx"""
+    if uploaded_file.name.endswith('.docx'):
+        doc = Document(uploaded_file)
+        full_text = []
+        for para in doc.paragraphs:
+            full_text.append(para.text)
+        return '\n'.join(full_text)
+    else:
+        # Fichier texte classique
+        return uploaded_file.getvalue().decode("utf-8", "ignore")
+
+def parse_imported_text(text_content):
+    """Analyse le texte brut pour trouver les [x/6]"""
+    matches = re.findall(r"\[(\d)/6\]", text_content)
+    if not matches: return None, "Aucune note [x/6] trouvée."
     
-    scores_list = [int(x) for x in matches]
+    scores = [int(x) for x in matches]
     mapping = get_schema_map_ordered()
-    
-    # Sécurité taille
-    limit = min(len(scores_list), len(mapping))
+    limit = min(len(scores), len(mapping))
     
     sums = {s:0 for s in SCHEMAS_ORDER}
-    counts = {s:0 for s in SCHEMAS_ORDER}
+    cnts = {s:0 for s in SCHEMAS_ORDER}
     
     for i in range(limit):
         sch = mapping[i]
-        sums[sch] += scores_list[i]
-        counts[sch] += 1
+        sums[sch] += scores[i]
+        cnts[sch] += 1
         
-    final = {}
-    for s in SCHEMAS_ORDER:
-        final[s] = round(sums[s]/counts[s], 2) if counts[s] > 0 else 0
-        
-    return final, f"Importé : {limit} réponses traitées."
+    final = {s: (round(sums[s]/cnts[s], 2) if cnts[s]>0 else 0) for s in SCHEMAS_ORDER}
+    return final, f"Succès ({limit} réponses)."
 
-# --- 3. UTILS ---
-
+# --- 3. UTILS & SAVE ---
 def clean_text(text):
     if not isinstance(text, str): return str(text)
     replacements = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "…": "...", "œ": "oe", "«": '"', "»": '"', "€": "EUR"}
@@ -260,203 +260,135 @@ def create_radar(d_A, d_B, n_A, n_B):
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=v_A, theta=cats, fill='toself', name=n_A, line_color='#2980b9'))
     fig.add_trace(go.Scatterpolar(r=v_B, theta=cats, fill='toself', name=n_B, line_color='#e74c3c'))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 6])), template="plotly_white", margin=dict(t=30, b=30, l=50, r=50))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 6])), template="plotly_white", margin=dict(t=30, b=30, l=40, r=40))
     return fig
 
-# --- 4. PDF REPORT ---
-
-class PDFMaster(FPDF):
+# --- 4. PDF ---
+class PDFExpert(FPDF):
     def header(self):
-        self.set_fill_color(41, 128, 185) # Bleu Pro
+        self.set_fill_color(44, 62, 80)
         self.rect(0, 0, 210, 40, 'F')
         self.set_font('Arial', 'B', 24); self.set_text_color(255)
         self.set_xy(10, 10); self.cell(0, 15, clean_text("ALLIANCE & SCHEMAS"), 0, 1)
         self.set_font('Arial', 'I', 12)
         self.cell(0, 10, clean_text("Analyse Clinique, Théologique & Pastorale"), 0, 1)
-        self.ln(10)
-    
+        self.ln(15)
     def footer(self):
         self.set_y(-15); self.set_font('Arial', '', 8); self.set_text_color(128)
-        self.cell(0, 10, clean_text(f"Page {self.page_no()} - Document Confidentiel"), 0, 0, 'C')
-
-    def draw_section(self, title, content, color_r, color_g, color_b):
-        self.set_fill_color(color_r, color_g, color_b)
-        self.set_font('Arial', 'B', 11); self.set_text_color(0)
+        self.cell(0, 10, clean_text(f"Page {self.page_no()}"), 0, 0, 'C')
+    def draw_box(self, title, content, r, g, b):
+        self.set_fill_color(r, g, b); self.set_font('Arial', 'B', 11); self.set_text_color(0)
         self.cell(0, 8, clean_text(f"  {title}"), 0, 1, 'L', 1)
         self.set_font('Arial', '', 10); self.set_text_color(50)
-        self.multi_cell(0, 6, clean_text(content), border='L')
-        self.ln(3)
+        self.multi_cell(0, 6, clean_text(content), border='L'); self.ln(3)
 
-def generate_pdf(nom_A, data_A, nom_B, data_B, code):
-    pdf = PDFMaster()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # PAGE 1 : Synthèse
-    pdf.add_page()
+def generate_pdf(nA, dA, nB, dB, code):
+    pdf = PDFExpert(); pdf.set_auto_page_break(True, 15); pdf.add_page()
     pdf.set_font('Arial', 'B', 16); pdf.set_text_color(0)
     pdf.cell(0, 10, clean_text(f"Dossier : {code}"), 0, 1)
     pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 8, clean_text(f"Partenaires : {nom_A} & {nom_B}"), 0, 1)
-    pdf.ln(5)
-    
+    pdf.cell(0, 8, clean_text(f"Partenaires : {nA} & {nB}"), 0, 1); pdf.ln(5)
     try:
-        fig = create_radar(data_A, data_B, nom_A, nom_B)
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            fig.write_image(tmp.name, format="png", width=800, height=600, scale=2, engine="kaleido")
-            pdf.image(tmp.name, x=15, y=70, w=180)
+        fig = create_radar(dA, dB, nA, nB)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as t:
+            fig.write_image(t.name, format="png", width=800, height=600, scale=2, engine="kaleido")
+            pdf.image(t.name, x=15, y=70, w=180)
         pdf.set_y(230)
-    except:
-        pdf.cell(0, 10, "[Graphique indisponible]", 0, 1)
-
-    # PAGE 2+ : Analyse
+    except: pdf.cell(0, 10, "[Graphique manquant]", 0, 1)
+    
     pdf.add_page(); pdf.set_font('Arial', 'B', 18); pdf.set_text_color(41, 128, 185)
     pdf.cell(0, 10, clean_text("ANALYSE DETAILLEE"), 0, 1); pdf.ln(5)
-
-    def get_max(s): return max(data_A.get(s,0), data_B.get(s,0))
+    
+    def get_max(s): return max(dA.get(s,0), dB.get(s,0))
     ordered = sorted(SCHEMAS_ORDER, key=get_max, reverse=True)
     
-    count = 0
     for s in ordered:
         mx = get_max(s)
         if mx >= 3.0:
-            count += 1
             inf = SCHEMA_LIBRARY[s]
-            
-            # Header Schéma
-            pdf.ln(5)
-            pdf.set_font('Arial', 'B', 14); pdf.set_text_color(192, 57, 43)
-            icon = "(!)" if mx >= 5 else ""
-            pdf.cell(0, 10, clean_text(f"{inf['nom'].upper()} {icon}"), 0, 1)
-            
-            # Scores
+            pdf.ln(5); pdf.set_font('Arial', 'B', 14); pdf.set_text_color(192, 57, 43)
+            pdf.cell(0, 10, clean_text(f"{inf['nom'].upper()} {'(!)' if mx>=5 else ''}"), 0, 1)
             pdf.set_font('Arial', 'B', 10); pdf.set_text_color(100)
-            pdf.cell(0, 6, clean_text(f"Scores : {nom_A}={data_A.get(s,0)} | {nom_B}={data_B.get(s,0)}"), 0, 1)
-            pdf.ln(3)
+            pdf.cell(0, 6, clean_text(f"A={dA.get(s,0)} | B={dB.get(s,0)}"), 0, 1); pdf.ln(2)
             
-            # Blocs Contenu
-            pdf.draw_section("Analyse Clinique", inf['clinique'], 235, 245, 251) # Bleu très pâle
-            pdf.draw_section("Impact sur le Couple", inf['couple'], 253, 237, 236) # Rose pâle
-            pdf.draw_section("Théologie (Cœur & Idoles)", inf['theologie'], 245, 245, 245) # Gris
-            pdf.draw_section("Pastoral & Pratique", inf['pratique'], 233, 247, 239) # Vert pâle
+            pdf.draw_box("Clinique", inf['clinique'], 235, 245, 251)
+            pdf.draw_box("Impact Couple", inf['couple'], 253, 237, 236)
+            pdf.draw_box("Théologie (Cœur & Idoles)", inf['theologie'], 245, 245, 245)
+            pdf.draw_box("Pastoral & Pratique", inf['pratique'], 233, 247, 239)
             
-            # Verset
-            pdf.set_fill_color(255, 255, 255); pdf.set_text_color(39, 174, 96); pdf.set_font('Arial', 'I', 10)
-            pdf.multi_cell(0, 6, clean_text(f"Méditation : {inf['verset']}"))
-            
-            pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2)
-            pdf.ln(5)
-            
-            if pdf.get_y() > 220: pdf.add_page()
-            
-    if count == 0: pdf.multi_cell(0, 10, clean_text("Aucun schéma critique."))
-    
+            pdf.set_font('Arial', 'I', 10); pdf.set_text_color(39, 174, 96)
+            pdf.multi_cell(0, 6, clean_text(f"Verset : {inf['verset']}"))
+            pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2); pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- 5. INTERFACE ---
-
 st.sidebar.title("Navigation")
-mode = st.sidebar.radio("Mode", ["🏠 Questionnaire (Patient)", "💼 Thérapeute (Expert)"])
+mode = st.sidebar.radio("Mode", ["🏠 Questionnaire", "💼 Espace Expert"])
 
-if mode == "🏠 Questionnaire (Patient)":
-    st.title("Questionnaire Clinique (YSQ-L3)")
-    if 'user' not in st.session_state: st.session_state.user = None
-    if 'page' not in st.session_state: st.session_state.page = 0
+if mode == "🏠 Questionnaire":
+    st.title("Questionnaire Couple (YSQ-L3)")
+    if 'usr' not in st.session_state: st.session_state.usr = None
+    if 'pg' not in st.session_state: st.session_state.pg = 0
+    if 'dat' not in st.session_state: st.session_state.dat = {}
     
-    if not st.session_state.user:
-        with st.form("auth"):
-            c = st.text_input("Code Couple").strip().upper()
-            n = st.text_input("Prénom")
-            if st.form_submit_button("Démarrer"):
-                if c and n: st.session_state.user = {"code": c, "nom": n}; st.rerun()
+    if not st.session_state.usr:
+        with st.form("log"):
+            c = st.text_input("Code"); n = st.text_input("Nom")
+            if st.form_submit_button("Go"): st.session_state.usr={"c":c,"n":n}; st.rerun()
     else:
-        # Paging 232 questions
-        if 'res' not in st.session_state: st.session_state.res = {}
-        PER_PAGE = 40
-        total = len(ALL_QUESTIONS)
-        pages = (total // PER_PAGE) + 1
+        # 232 questions paging
+        PER_PAGE=40; tot=len(ALL_QUESTIONS); pgs=(tot//PER_PAGE)+1
+        start=st.session_state.pg*PER_PAGE+1; end=min(start+PER_PAGE, tot+1)
+        st.progress((st.session_state.pg+1)/pgs); st.caption(f"P {st.session_state.pg+1}/{pgs}")
         
-        start = st.session_state.page * PER_PAGE + 1
-        end = min(start + PER_PAGE, total + 1)
-        
-        st.progress((st.session_state.page+1)/pages)
-        st.caption(f"Page {st.session_state.page+1}/{pages}")
-        
-        with st.form("q_form"):
+        with st.form("q"):
             for i in range(start, end):
                 if i in ALL_QUESTIONS:
-                    q = ALL_QUESTIONS[i]
-                    val = st.session_state.res.get(i, 1)
-                    st.markdown(f"**{i}. {q['text']}**")
-                    st.session_state.res[i] = st.slider("", 1, 6, val, key=f"s_{i}")
-                    st.divider()
-            
-            col1, col2 = st.columns(2)
-            if st.session_state.page < pages - 1:
-                if st.form_submit_button("Suivant ➡️"):
-                    st.session_state.page += 1
-                    st.rerun()
+                    st.markdown(f"**{i}. {ALL_QUESTIONS[i]['text']}**")
+                    st.session_state.dat[i] = st.slider("", 1, 6, st.session_state.dat.get(i, 1), key=f"q{i}")
+            if st.session_state.pg < pgs-1:
+                if st.form_submit_button("Suivant"): st.session_state.pg+=1; st.rerun()
             else:
-                if st.form_submit_button("✅ Envoyer"):
-                    # Calculs
-                    m = get_schema_map_ordered()
-                    sums = {s:0 for s in SCHEMAS_ORDER}
-                    cnts = {s:0 for s in SCHEMAS_ORDER}
-                    for k,v in st.session_state.res.items():
-                        if k <= len(m):
-                            sch = m[k-1]
-                            sums[sch]+=v
-                            cnts[sch]+=1
-                    fin = {s: (round(sums[s]/cnts[s],2) if cnts[s]>0 else 0) for s in SCHEMAS_ORDER}
-                    save_response(st.session_state.user['code'], st.session_state.user['nom'], fin)
+                if st.form_submit_button("Envoyer"):
+                    m=get_schema_map_ordered(); sm={s:0 for s in SCHEMAS_ORDER}; cn={s:0 for s in SCHEMAS_ORDER}
+                    for k,v in st.session_state.dat.items():
+                        if k<=len(m): sc=m[k-1]; sm[sc]+=v; cn[sc]+=1
+                    fin={s: (round(sm[s]/cn[s],2) if cn[s]>0 else 0) for s in SCHEMAS_ORDER}
+                    save_response(st.session_state.usr['c'], st.session_state.usr['n'], fin)
                     st.success("Terminé !"); st.balloons()
 
-elif mode == "💼 Thérapeute (Expert)":
+elif mode == "💼 Espace Expert":
     st.title("Espace Expert")
-    pwd = st.sidebar.text_input("Mot de passe", type="password")
-    
-    if pwd == "Expert2024":
-        # IMPORT
-        with st.expander("📥 Import Fichiers Word/Txt ([x/6])", expanded=True):
+    if st.sidebar.text_input("Password", type="password") == "Expert2024":
+        
+        with st.expander("📥 IMPORTER FICHIERS (.txt / .docx)", expanded=True):
+            st.info("Vous pouvez uploader directement vos fichiers Word.")
             c1, c2 = st.columns(2)
-            fA = c1.file_uploader("Fichier A")
-            nA = c1.text_input("Prénom A")
-            fB = c2.file_uploader("Fichier B")
-            nB = c2.text_input("Prénom B")
+            fA = c1.file_uploader("Fichier A", type=['txt','docx']); nA = c1.text_input("Nom A")
+            fB = c2.file_uploader("Fichier B", type=['txt','docx']); nB = c2.text_input("Nom B")
             code = st.text_input("Code Dossier").strip().upper()
             
             if st.button("Importer"):
                 if fA and fB and code:
-                    cA = fA.getvalue().decode("utf-8", "ignore")
-                    cB = fB.getvalue().decode("utf-8", "ignore")
-                    sA, mA = parse_imported_file(cA)
-                    sB, mB = parse_imported_file(cB)
+                    txtA = extract_text_from_file(fA)
+                    txtB = extract_text_from_file(fB)
+                    sA, mA = parse_imported_text(txtA)
+                    sB, mB = parse_imported_text(txtB)
+                    
                     if sA and sB:
-                        save_response(code, nA, sA)
-                        save_response(code, nB, sB)
-                        st.success("Import réussi !")
-                    else: st.error("Erreur format.")
+                        save_response(code, nA, sA); save_response(code, nB, sB)
+                        st.success("Dossier créé !"); st.write(mA); st.write(mB)
+                    else: st.error("Erreur lecture format [x/6].")
         
-        # ANALYSE
         st.divider()
         df = load_data()
         if not df.empty:
             sel = st.selectbox("Dossier", df['Code_Couple'].unique())
             sub = df[df['Code_Couple']==sel]
             if len(sub)>=2:
-                rA = sub.iloc[0]; rB = sub.iloc[1]
-                nA = rA['Nom']; nB = rB['Nom']
-                
+                rA=sub.iloc[0]; rB=sub.iloc[1]
                 c1, c2 = st.columns([2,1])
-                with c1: st.plotly_chart(create_radar(rA.to_dict(), rB.to_dict(), nA, nB))
+                with c1: st.plotly_chart(create_radar(rA.to_dict(), rB.to_dict(), rA['Nom'], rB['Nom']))
                 with c2:
-                    pdf = generate_pdf(nA, rA.to_dict(), nB, rB.to_dict(), sel)
-                    st.download_button("📥 Rapport PDF Master", pdf, f"Report_{sel}.pdf", "application/pdf")
-                
-                # Vue détaillée écran
-                st.subheader("Aperçu Rapide")
-                for s in SCHEMAS_ORDER:
-                    mx = max(rA[s], rB[s])
-                    if mx >= 3:
-                        with st.expander(f"{SCHEMA_LIBRARY[s]['nom']} ({mx})"):
-                            st.write(SCHEMA_LIBRARY[s]['theologie'])
-                            st.info(SCHEMA_LIBRARY[s]['pratique'])
+                    pdf = generate_pdf(rA['Nom'], rA.to_dict(), rB['Nom'], rB.to_dict(), sel)
+                    st.download_button("📥 Rapport PDF", pdf, f"Rap_{sel}.pdf")
